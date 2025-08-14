@@ -1,29 +1,28 @@
 #!/bin/bash
 set -e
 
-# Require PASSWORD
-if [ -z "$PASSWORD" ]; then
-  echo "ERROR: PASSWORD env not set"
-  exit 1
-fi
+# Ensure PGDATA is set
+export PGDATA=${PGDATA:-/var/lib/postgresql/data}
 
-# Setup DB dir
+# Create data directory if it doesn't exist
 mkdir -p "$PGDATA"
 chown -R postgres:postgres "$PGDATA"
 
-# Init DB if not already
-if [ ! -s "$PGDATA/PG_VERSION" ]; then
-  su-exec postgres initdb
-  su-exec postgres pg_ctl -D "$PGDATA" start
-  su-exec postgres createdb "$DB_NAME"
-  su-exec postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$PASSWORD';"
-  su-exec postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
-  su-exec postgres psql -d "$DB_NAME" -f /docker-entrypoint-initdb.d/init.sql
-  su-exec postgres pg_ctl -D "$PGDATA" stop
+# Initialize database only if empty
+if [ -z "$(ls -A "$PGDATA")" ]; then
+    echo "No existing database found, initializing..."
+    su - postgres -c "/usr/lib/postgresql/${PG_MAJOR}/bin/initdb -D '$PGDATA'"
+else
+    echo "Existing database found, skipping initialization."
 fi
 
-# Start Postgres in background
-su-exec postgres pg_ctl -D "$PGDATA" -o "-c listen_addresses='*'" -w start
+# Start Postgres in background to run migrations / app setup
+echo "Starting PostgreSQL..."
+su - postgres -c "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_ctl -D '$PGDATA' -w start"
 
-# Start Node backend
-exec node server.js
+# Run your app's migrations if applicable
+# Example:
+# su - postgres -c "psql -d mydb -f /app/migrations.sql"
+
+# Keep Postgres running in foreground
+exec su - postgres -c "/usr/lib/postgresql/${PG_MAJOR}/bin/postgres -D '$PGDATA'"
